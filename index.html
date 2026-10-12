@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Метроном 6,27</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    background: #111;
+    color: #eee;
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  h1 { margin: 0 0 10px; font-size: 1.8em; }
+  .sub { color: #999; margin-bottom: 30px; text-align: center; }
+  #phase {
+    font-size: 1.6em;
+    font-weight: bold;
+    margin-bottom: 10px;
+    text-align: center;
+    min-height: 2em;
+  }
+  #desc {
+    color: #bbb;
+    margin-bottom: 20px;
+    text-align: center;
+    min-height: 1.5em;
+  }
+  #timer { font-size: 3em; font-variant-numeric: tabular-nums; margin-bottom: 20px; }
+  #cycle { color: #888; margin-bottom: 30px; }
+  button {
+    font-size: 1.2em;
+    padding: 12px 30px;
+    border: none;
+    border-radius: 8px;
+    background: #2e7d32;
+    color: #fff;
+    cursor: pointer;
+  }
+  button.stop { background: #b71c1c; }
+</style>
+</head>
+<body>
+
+<h1>Метроном 6,27</h1>
+<div class="sub">Шесть фаз мышления. Нажмите «Старт» и включите звук.</div>
+
+<div id="phase">—</div>
+<div id="desc">Нажмите «Старт»</div>
+<div id="timer">0</div>
+<div id="cycle">Цикл: 0</div>
+
+<button id="toggle">Старт</button>
+
+<script>
+// Фазы: название, длительность мс, частота начала Гц, частота конца Гц, описание
+const PHASES = [
+  { name: "1. Голограмма понятий",   dur: 1982, f0: 220,  f1: 330,  desc: "Удерживайте условия задачи. Решений пока не ищите." },
+  { name: "2. Разгон абстракций",    dur: 637,  f0: 440,  f1: 880,  desc: "Придумывайте любые идеи, даже абсурдные." },
+  { name: "3. Фазовая калибровка",   dur: 431,  f0: 0,    f1: 0,    desc: "Пауза. Где в идее логическая ошибка?" },
+  { name: "4. Заземление",           dur: 416,  f0: 150,  f1: 150,  desc: "Смотрите на сухие факты задачи." },
+  { name: "5. Осмысление",           dur: 3479, f0: 432,  f1: 432,  desc: "Соедините факты и идеи. Запишите ход мысли." },
+  { name: "6. Инсайт",               dur: 325,  f0: 2000, f1: 2000, desc: "Зафиксируйте ключевой вывод." },
+];
+
+const VOLUME = 0.3;
+let audioCtx = null;
+let running = false;
+let timerId = null;
+let cycle = 0;
+
+const phaseEl = document.getElementById("phase");
+const descEl  = document.getElementById("desc");
+const timerEl = document.getElementById("timer");
+const cycleEl = document.getElementById("cycle");
+const btn     = document.getElementById("toggle");
+
+// Звук одной фазы: синус с линейным изменением частоты от f0 к f1
+function playTone(f0, f1, durMs) {
+  if (f0 <= 0 || !audioCtx) return;
+  const t0 = audioCtx.currentTime;
+  const dur = durMs / 1000;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(f0, t0);
+  if (f1 !== f0) osc.frequency.linearRampToValueAtTime(f1, t0 + dur);
+  // Короткие фейды, чтобы не было щелчков на границах фаз
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(VOLUME, t0 + 0.01);
+  gain.gain.setValueAtTime(VOLUME, t0 + dur - 0.02);
+  gain.gain.linearRampToValueAtTime(0, t0 + dur);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.05);
+}
+
+// Цикл фаз с расписанием от абсолютного времени, чтобы дрейф не копился
+function runCycle() {
+  cycle++;
+  cycleEl.textContent = "Цикл: " + cycle;
+  const startAt = performance.now();
+  let planned = 0;
+  let i = 0;
+
+  function nextPhase() {
+    if (!running) return;
+    if (i >= PHASES.length) {
+      runCycle();
+      return;
+    }
+    const p = PHASES[i];
+    phaseEl.textContent = p.name;
+    descEl.textContent  = p.desc;
+    playTone(p.f0, p.f1, p.dur);
+
+    const phaseStart = startAt + planned;
+    planned += p.dur;
+    i++;
+
+    // Обновление таймера и переход к следующей фазе по расписанию
+    const endAt = startAt + planned;
+    function tick() {
+      if (!running) return;
+      const left = Math.max(0, endAt - performance.now());
+      timerEl.textContent = (left / 1000).toFixed(2) + " с";
+      if (performance.now() >= endAt) {
+        nextPhase();
+      } else {
+        timerId = requestAnimationFrame(tick);
+      }
+    }
+    tick();
+  }
+
+  nextPhase();
+}
+
+btn.addEventListener("click", () => {
+  if (!running) {
+    // AudioContext создаётся по нажатию кнопки (требование браузеров)
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    running = true;
+    btn.textContent = "Стоп";
+    btn.classList.add("stop");
+    cycle = 0;
+    runCycle();
+  } else {
+    running = false;
+    cancelAnimationFrame(timerId);
+    btn.textContent = "Старт";
+    btn.classList.remove("stop");
+    phaseEl.textContent = "—";
+    descEl.textContent = "Остановлено";
+    timerEl.textContent = "0";
+  }
+});
+</script>
+
+</body>
+</html>
